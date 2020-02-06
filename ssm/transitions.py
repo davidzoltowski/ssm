@@ -152,7 +152,7 @@ class ConstrainedStationaryTransitions(StationaryTransitions):
         for i in range(transition_mask.shape[0]):
             assert transition_mask[i].any(), "Mask must contain at least one " \
                 "nonzero entry per row."
-        
+
         self.transition_mask = transition_mask
         Ps = Ps * transition_mask
         Ps /= Ps.sum(axis=-1, keepdims=True)
@@ -167,7 +167,7 @@ class ConstrainedStationaryTransitions(StationaryTransitions):
             tags,
             **kwargs
         )
-        assert np.allclose(self.transition_matrix[~self.transition_mask], 0, 
+        assert np.allclose(self.transition_matrix[~self.transition_mask], 0,
                            atol=2 * LOG_EPS)
         self.log_Ps[~self.transition_mask] = -np.inf
 
@@ -195,7 +195,7 @@ class StickyTransitions(StationaryTransitions):
 
     def m_step(self, expectations, datas, inputs, masks, tags, **kwargs):
         expected_joints = sum([np.sum(Ezzp1, axis=0) for _, Ezzp1, _ in expectations]) + 1e-16
-        expected_joints += self.kappa * np.eye(self.K) + (self.alpha-1) * np.ones((self.K, self.K)) 
+        expected_joints += self.kappa * np.eye(self.K) + (self.alpha-1) * np.ones((self.K, self.K))
         P = (expected_joints / expected_joints.sum(axis=1, keepdims=True)) + 1e-16
         assert np.all(P >= 0), "mode is well defined only when transition matrix entries are non-negative! Check alpha >= 1"
         self.log_Ps = np.log(P)
@@ -292,6 +292,15 @@ class RecurrentTransitions(InputDrivenTransitions):
         # Past observations effect
         log_Ps = log_Ps + np.dot(data[:-1], self.Rs.T)[:, None, :]
         return log_Ps - logsumexp(log_Ps, axis=2, keepdims=True)
+
+    def transition_matrix(self, data, input, mask, tag):
+        # For a single data point: data is x_{t-1}, input is x_t
+        log_Ps = self.log_Ps[None, :, :]
+        # Input effect
+        log_Ps = log_Ps + np.dot(input, self.Ws.T)[:, None, :]
+        # Past observations effect
+        log_Ps = log_Ps + np.dot(data, self.Rs.T)[:, None, :]
+        return np.exp(log_Ps - logsumexp(log_Ps, axis=2, keepdims=True))
 
     def m_step(self, expectations, datas, inputs, masks, tags, **kwargs):
         Transitions.m_step(self, expectations, datas, inputs, masks, tags, **kwargs)
