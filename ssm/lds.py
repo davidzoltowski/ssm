@@ -127,7 +127,8 @@ class SLDS(object):
             autoregressive=emssn.AutoRegressiveEmissions,
             autoregressive_orthog=emssn.AutoRegressiveOrthogonalEmissions,
             autoregressive_id=emssn.AutoRegressiveIdentityEmissions,
-            autoregressive_nn=emssn.AutoRegressiveNeuralNetworkEmissions
+            autoregressive_nn=emssn.AutoRegressiveNeuralNetworkEmissions,
+            calcium=emssn.CalciumEmissions
             )
 
         if isinstance(emissions, str):
@@ -960,7 +961,8 @@ class LDS(SLDS):
             autoregressive=emssn.AutoRegressiveEmissions,
             autoregressive_orthog=emssn.AutoRegressiveOrthogonalEmissions,
             autoregressive_id=emssn.AutoRegressiveIdentityEmissions,
-            autoregressive_nn=emssn.AutoRegressiveNeuralNetworkEmissions
+            autoregressive_nn=emssn.AutoRegressiveNeuralNetworkEmissions,
+            calcium=emssn.CalciumEmissions
             )
 
         if isinstance(emissions, str):
