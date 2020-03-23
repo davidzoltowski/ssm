@@ -65,11 +65,11 @@ class Emissions(object):
               Optimization via Laplace-EM may be slow. Consider using an \
               alternative posterior and inference method.")
         # Return (T, D, D) array of blocks for the diagonal of the Hessian
-        T, D = data.shape
+        T, D = x.shape
         obj = lambda xt, datat, inputt, maskt: \
             self.log_likelihoods(datat[None,:], inputt[None,:], maskt[None,:], tag, xt[None,:])[0, 0]
         hess = hessian(obj)
-        terms = np.array([np.squeeze(hess(xt, datat, inputt, maskt))
+        terms = np.array([np.squeeze(hess(xt, datat, inputt, maskt)).reshape(D,D)
                           for xt, datat, inputt, maskt in zip(x, data, input, mask)])
         return terms
 
@@ -899,7 +899,7 @@ class CalciumEmissions(_LinearEmissions):
     def params(self, value):
         super(CalciumEmissions, self.__class__).params.fset(self, value)
 
-    def log_likelihoods(self, data, input, mask, tag, x, S=10):
+    def log_likelihoods(self, data, input, mask, tag, x, S=20):
         # S is number of spikes to marginalize
 
         # firing rates         
@@ -952,16 +952,11 @@ class CalciumEmissions(_LinearEmissions):
             y[t] = mus[t, z[t], :] + self.As[z[t]] * y[t-1] + self.betas[z[t]] * spikes[t, z[t], :] + np.sqrt(etas[z[0]]) * npr.randn(N) 
         return y
 
-    # def smooth(self, expected_states, variational_mean, data, input=None, mask=None, tag=None):
-    #     lambdas = self.mean(self.forward(variational_mean, input, tag))
-
-    #     pass
-
     def smooth(self, expected_states, variational_mean, data, input=None, mask=None, tag=None, S=10):
         assert self.single_subspace
         # spike rate mean
         lambdas = self.mean(self.forward(variational_mean, input, tag))
-        # import ipdb; ipdb.set_trace()
+
         # compute autoregressive component of mean
         pad = np.zeros((1, 1, self.N))
         mus = np.concatenate((pad, self.As[None, :, :] * data[:-1, None, :])) 
