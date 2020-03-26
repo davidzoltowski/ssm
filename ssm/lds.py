@@ -617,6 +617,23 @@ J
                 x = newtons_method_block_tridiag_hessian(
                     x0, obj, grad_func, hess_func,
                     tolerance=continuous_tolerance, maxiter=continuous_maxiter)
+                # T, D = x0.shape
+                # obj_func = lambda x: neg_expected_log_joint(x.reshape((T,D)), Ez, Ezzp1, scale=scale)
+                # grad_func = grad(obj_func)
+                # def hess_func(x):
+                #     from ssm.primitives import blocks_to_full 
+                #     J_diag, J_lower_diag = hessian_neg_expected_log_joint(x.reshape((T,D)), Ez, Ezzp1, scale=scale)
+                #     return blocks_to_full(J_diag, J_lower_diag)
+                # # hess_func = lambda x: hessian_neg_expected_log_joint(x.reshape((T,D)), Ez, Ezzp1, scale=scale)
+                # def hess_p(x, p):
+                #     J_diag, J_lower_diag = hessian_neg_expected_log_joint(x.reshape((T,D)), Ez, Ezzp1, scale=scale)
+                #     return symm_block_tridiag_matmul(J_diag, J_lower_diag, p.reshape((T,D))).ravel()
+                # # hessp = lambda x : solve_symm_block_tridiag(H_diag, H_lower_diag, g)
+                # from scipy.optimize import minimize 
+                # # import ipdb; ipdb.set_trace()
+                # # sol = minimize(obj_func, x0.reshape((T*D)), hess=hess_func, jac=grad_func, method="trust-exact")
+                # sol2 = minimize(obj_func, x0.reshape((T*D)), hessp=hess_p, jac=grad_func, method="trust-ncg")
+                # x = sol2.x.reshape((T,D))
             elif optimizer == "lbfgs":
                 # use LBFGS
                 def _objective(params, itr):
@@ -631,6 +648,18 @@ J
 
             # Compute the Hessian vector product h = J * x = -H * x
             # We can do this without instantiating the full matrix
+            # grad_func = lambda x: grad_neg_expected_log_joint(x, Ez, Ezzp1, scale=scale)
+            # hess_func = lambda x: hessian_neg_expected_log_joint(x, Ez, Ezzp1, scale=scale)
+            # from ssm.primitives import blocks_to_full 
+            # from scipy.optimize import minimize
+            # import ipdb; ipdb.set_trace()
+            # T, D = x.shape
+            # sol = minimize(obj, x.reshape((T*D)), hess= lambda x : hess_func(x.reshape((T,D))), jac= lambda x: grad_func(x.reshape((T,D))), method="trust-exact")
+            # Hess = blocks_to_full(J_diag, J_lower_diag)
+            # xp = (x.reshape((T*D))) - 1e-3 * eigvec).reshape((T,D))
+            # xp = (x.reshape((T*D)) - 1e-3 * eigvecs[:,2]).reshape((T,D))
+            # obj(x)
+            # obj(xp)
             h = symm_block_tridiag_matmul(J_diag, J_lower_diag, x)
 
             # update params
