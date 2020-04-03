@@ -67,10 +67,12 @@ class Emissions(object):
         # Return (T, D, D) array of blocks for the diagonal of the Hessian
         T, D = x.shape
         obj = lambda xt, datat, inputt, maskt: \
-            self.log_likelihoods(datat[None,:], inputt[None,:], maskt[None,:], tag, xt[None,:])[0, 0]
+            self.log_likelihoods(datat[None,:], inputt[None,:], maskt[None,:], tag, xt[None,:])[0][0]
         hess = hessian(obj)
         terms = np.array([np.squeeze(hess(xt, datat, inputt, maskt)).reshape(D,D)
                           for xt, datat, inputt, maskt in zip(x, data, input, mask)])
+        
+        import ipdb; ipdb.set_trace()
         return terms
 
     def m_step(self, discrete_expectations, continuous_expectations,
@@ -841,8 +843,85 @@ def log_poisson_1D(y, rate):
 def log_gaussian_1D(y, mu, sig2):
     return -0.5 * np.log(2.0 * np.pi * sig2) -0.5 * (y - mu)**2 / sig2
 
+def softplus_stable(x, bias=None, dt=1.0):
+
+    if bias is not None:
+        inp = x+bias 
+
+    f = np.log1p(np.exp(inp)) * dt 
+    logf = np.log(f) 
+    df = np.exp(inp) / (1.0 + np.exp(inp)) * dt
+    ddf = np.exp(inp) / (1.0 + np.exp(inp))**2 * dt
+
+    loc = inp>30.0
+    f[loc] = inp[loc]
+    logf[loc] = np.log(inp[loc]) + np.log(dt)
+    df[loc] = 1.0 * dt
+    ddf[loc] = 0.0 * dt
+
+
+    return f, logf, df, ddf
+
+def exp_stable(x, bias=0, dt=1.0):
+
+    f = np.exp(x+bias) * dt
+    logf = x + bias + np.log(dt)
+    df = f
+    ddf = f
+
+    return f, logf, df, ddf
+
+def GanmorCalciumAR1_Hessian_Covariates(w, X, Y, hyperparams, nlfun, S=10):
+
+    # unpack hyperparams
+    tau, alpha, sig2 = hyperparams
+
+    # compute AR(1) diffs
+    taudecay = np.exp(-1.0/tau) # decay factor for one time bin
+    Y = np.pad(Y, (1,0)) # pad Y by a time bin
+    Ydff = (Y[1:] - taudecay * Y[:-1]) / alpha
+
+    # compute grid of spike counts
+    ygrid = np.arange(0, S)
+
+    # Gaussian log-likelihood terms
+    log_gauss_grid = - 0.5 * (Ydff[:,None]-ygrid[None,:])**2 / (sig2 / alpha**2) - 0.5 * np.log(2.0 * np.pi * sig2)
+    
+    Xproj = X@w
+    poissConst = gammaln(ygrid+1)
+
+    # compute derivatives of nonlinearity 
+    f, logf, df, ddf = nlfun(Xproj)
+    logPcounts = logf[:,None] * ygrid[None,:] - f[:,None] - poissConst[None,:]
+
+    # compute log-likelihood for each time bin
+    logjoint = log_gauss_grid + logPcounts 
+    logli = logsumexp(logjoint, axis=1) # log likelihood for each time bin
+
+    # gradient weights
+    dLpoiss = (df / f)[:,None] * ygrid[None,:] - df[:,None] # deriv of Poisson log likelihood
+    gwts = np.sum(np.exp(logjoint-logli[:,None]) * dLpoiss, axis=1) # gradient weights 
+
+    # compute hessian
+    ddLpoiss = (ddf / f - (df / f)**2)[:,None] * ygrid[None,:] - ddf[:,None]
+    ddL = (ddLpoiss + dLpoiss**2)
+    hwts = np.sum(np.exp(logjoint-logli[:,None]) * ddL, axis=1) - gwts**2 # hessian weights
+    H = np.array([-1.0 * np.outer(w, w) * hwt for x, hwt in zip(X, hwts)])
+
+    # return Hessian of log-likelihood (H is Hessian of negative log-likelihood)
+    return -1.0 * H
+    
+def calcium_hessian(C, biases, X, Y, hyperparams, nlfun, dt=1.0, S=10):
+    T, D = X.shape
+    N = Y.shape[1]
+    hess_X = np.zeros((T, D, D))
+    for n in range(N):
+        nlfun_n = lambda x : nlfun(x, bias=biases[:,n], dt=dt)
+        hess_X += GanmorCalciumAR1_Hessian_Covariates(C[n,:], X, Y[:,n], hyperparams[n], nlfun_n, S=S)
+    return hess_X
+
 class CalciumEmissions(_LinearEmissions):
-    def __init__(self, N, K, D, M=0, single_subspace=True, link="log", bin_size=1.0, lags=1, **kwargs):
+    def __init__(self, N, K, D, M=0, single_subspace=True, link="log", bin_size=1.0, lags=1, S=10, **kwargs):
         super(CalciumEmissions, self).__init__(N, K, D, M, single_subspace=single_subspace, **kwargs)
         assert single_subspace
         # Calcium emissions combines features of Poisson emissions and autoregressive emissions
@@ -878,12 +957,16 @@ class CalciumEmissions(_LinearEmissions):
         # spike part of mean
         self.betas = np.ones((1, N))
 
-        def calcium_log_likelihood(x, y, ytm1, A, beta, inv_etas, C, d, S=10):
+        # number of spikes to sum over
+        self.S = S
+
+        def calcium_log_likelihood(x, y, ytm1, A, beta, inv_etas, C, d, bin_size, S):
             s = np.arange(0,S,1)
-            mus = A * ytm1[:,None] + beta[:,None] * s
+            mus = (A * ytm1)[:,None] + beta[:,None] * s
             sig2s = np.exp(inv_etas)
-            rate = self.mean(C@x+d)
-            joint = logsumexp( log_gaussian_1D(y[:,None], mus, sig2s) + log_poisson_1D(s, rate[:,None]), axis=1)
+            # rate = self.mean(C@x+d)
+            rate = np.log1p(np.exp(C@x+d)) * bin_size
+            joint = logsumexp( log_gaussian_1D(y[:,None], mus, sig2s[:,None]) + log_poisson_1D(s[None,:], rate[:,None]), axis=1)
             ll = np.sum(joint)
             return ll
 
@@ -899,11 +982,10 @@ class CalciumEmissions(_LinearEmissions):
     def params(self, value):
         super(CalciumEmissions, self.__class__).params.fset(self, value)
 
-    def log_likelihoods(self, data, input, mask, tag, x, S=20):
+    def log_likelihoods(self, data, input, mask, tag, x):
         # S is number of spikes to marginalize
 
         # firing rates         
-        # import ipdb; ipdb.set_trace()
         lambdas = self.mean(self.forward(x, input, tag)) 
 
         # compute autoregressive component of mean
@@ -911,7 +993,7 @@ class CalciumEmissions(_LinearEmissions):
         mus = np.concatenate((pad, self.As[None, :, :] * data[:-1, None, :])) 
 
         # initialize spike count range
-        s = np.arange(0,S,1)
+        s = np.arange(0,self.S,1)
 
         # add spike components to autoregressive mean for each number of spikes
         mus = mus[:,:,:,None] + self.betas[None,:,:,None] * s
@@ -952,7 +1034,7 @@ class CalciumEmissions(_LinearEmissions):
             y[t] = mus[t, z[t], :] + self.As[z[t]] * y[t-1] + self.betas[z[t]] * spikes[t, z[t], :] + np.sqrt(etas[z[0]]) * npr.randn(N) 
         return y
 
-    def smooth(self, expected_states, variational_mean, data, input=None, mask=None, tag=None, S=10):
+    def smooth(self, expected_states, variational_mean, data, input=None, mask=None, tag=None):
         assert self.single_subspace
         # spike rate mean
         lambdas = self.mean(self.forward(variational_mean, input, tag))
@@ -962,7 +1044,7 @@ class CalciumEmissions(_LinearEmissions):
         mus = np.concatenate((pad, self.As[None, :, :] * data[:-1, None, :])) 
 
         # marginalize over spikes
-        s = np.arange(0,S,1)
+        s = np.arange(0,self.S,1)
         mus = mus[:,:,:,None] + self.betas[None,:,:,None] * s
         outp = log_poisson_1D(s[None,None,None,:], lambdas[:,:,:,None])
         mus = np.sum(mus * np.exp(outp), axis=3)
@@ -971,9 +1053,16 @@ class CalciumEmissions(_LinearEmissions):
     def initialize(self, datas, inputs=None, masks=None, tags=None):
         pass 
 
+    def hessian_log_emissions_prob(self, data, input, mask, tag, x, Ez=None):
+        assert self.single_subspace and self.link_name == "softplus"
+        biases = (np.matmul(self.Fs[None, ...], input[:, None, :, None])[:, :, :, 0] + self.ds)[:,0,:]
+        nlfun = softplus_stable
+        hyperparams = [[-1.0 / np.log(self.As[0][n]), self.betas[0][n], np.exp(self.inv_etas[0][n])] for n in range(self.N)]
+        hess = calcium_hessian(self.Cs[0], biases, x, data, hyperparams, nlfun, dt=self.bin_size, S=self.S)
+        return hess
+
     # def hessian_log_emissions_prob(self, data, input, mask, tag, x, Ez=None):
     #     assert self.single_subspace
-    #     # import ipdb; ipdb.set_trace()
     #     pad = np.zeros((1, self.N))
     #     ytm1s = np.concatenate((pad, data))
     #     hess = [self.hess_ca(xt, yt, ytm1, self.As[0], self.betas[0], self.inv_etas[0], self.Cs[0], self.ds[0]) 
