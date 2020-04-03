@@ -67,7 +67,7 @@ class Emissions(object):
         # Return (T, D, D) array of blocks for the diagonal of the Hessian
         T, D = x.shape
         obj = lambda xt, datat, inputt, maskt: \
-            self.log_likelihoods(datat[None,:], inputt[None,:], maskt[None,:], tag, xt[None,:])[0][0]
+            self.log_likelihoods(datat[None,:], inputt[None,:], maskt[None,:], tag, xt[None,:])[0,0]
         hess = hessian(obj)
         terms = np.array([np.squeeze(hess(xt, datat, inputt, maskt)).reshape(D,D)
                           for xt, datat, inputt, maskt in zip(x, data, input, mask)])
