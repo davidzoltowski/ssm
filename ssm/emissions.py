@@ -871,7 +871,7 @@ def exp_stable(x, bias=0, dt=1.0):
 
     return f, logf, df, ddf
 
-def GanmorCalciumAR1_Hessian_Covariates(w, X, Y, hyperparams, nlfun, S=10):
+def GanmorCalciumAR1_Hessian_Covariates(w, X, Y, hyperparams, nlfun, S=10, approx=False):
 
     # unpack hyperparams
     tau, alpha, sig2 = hyperparams
@@ -906,18 +906,20 @@ def GanmorCalciumAR1_Hessian_Covariates(w, X, Y, hyperparams, nlfun, S=10):
     ddLpoiss = (ddf / f - (df / f)**2)[:,None] * ygrid[None,:] - ddf[:,None]
     ddL = (ddLpoiss + dLpoiss**2)
     hwts = np.sum(np.exp(logjoint-logli[:,None]) * ddL, axis=1) - gwts**2 # hessian weights
+    if approx is True:
+        hwts = np.minimum(hwts, 0.0)
     H = np.array([-1.0 * np.outer(w, w) * hwt for x, hwt in zip(X, hwts)])
 
     # return Hessian of log-likelihood (H is Hessian of negative log-likelihood)
     return -1.0 * H
     
-def calcium_hessian(C, biases, X, Y, hyperparams, nlfun, dt=1.0, S=10):
+def calcium_hessian(C, biases, X, Y, hyperparams, nlfun, dt=1.0, S=10, approx=False):
     T, D = X.shape
     N = Y.shape[1]
     hess_X = np.zeros((T, D, D))
     for n in range(N):
         nlfun_n = lambda x : nlfun(x, bias=biases[:,n], dt=dt)
-        hess_X += GanmorCalciumAR1_Hessian_Covariates(C[n,:], X, Y[:,n], hyperparams[n], nlfun_n, S=S)
+        hess_X += GanmorCalciumAR1_Hessian_Covariates(C[n,:], X, Y[:,n], hyperparams[n], nlfun_n, S=S, approx=approx)
     return hess_X
 
 class CalciumEmissions(_LinearEmissions):
@@ -1061,6 +1063,13 @@ class CalciumEmissions(_LinearEmissions):
         hess = calcium_hessian(self.Cs[0], biases, x, data, hyperparams, nlfun, dt=self.bin_size, S=self.S)
         return hess
 
+    def approx_hessian_log_emissions_prob(self, data, input, mask, tag, x, Ez=None):
+        assert self.single_subspace and self.link_name == "softplus"
+        biases = (np.matmul(self.Fs[None, ...], input[:, None, :, None])[:, :, :, 0] + self.ds)[:,0,:]
+        nlfun = softplus_stable
+        hyperparams = [[-1.0 / np.log(self.As[0][n]), self.betas[0][n], np.exp(self.inv_etas[0][n])] for n in range(self.N)]
+        hess = calcium_hessian(self.Cs[0], biases, x, data, hyperparams, nlfun, dt=self.bin_size, S=self.S, approx=True)
+        return hess
     # def hessian_log_emissions_prob(self, data, input, mask, tag, x, Ez=None):
     #     assert self.single_subspace
     #     pad = np.zeros((1, self.N))

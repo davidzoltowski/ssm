@@ -7,11 +7,12 @@ import autograd.numpy.random as npr
 from autograd.tracer import getval
 from autograd.misc import flatten
 from autograd import value_and_grad, grad
+from autograd.scipy.linalg import cholesky_banded
 
 from ssm.optimizers import adam_step, rmsprop_step, sgd_step, lbfgs, bfgs, \
     convex_combination, adam, sgd, rmsprop, \
     newtons_method_block_tridiag_hessian
-from ssm.primitives import hmm_normalizer, symm_block_tridiag_matmul
+from ssm.primitives import hmm_normalizer, symm_block_tridiag_matmul, blocks_to_bands
 from ssm.messages import hmm_expected_states, viterbi
 from ssm.util import ensure_args_are_lists, \
     ensure_slds_args_not_none, ensure_variational_args_are_lists
@@ -611,7 +612,7 @@ J
             scale = x0.size
             obj = lambda x: neg_expected_log_joint(x, Ez, Ezzp1, scale=scale)
             if optimizer == "newton":
-                Run Newtons method
+                # Run Newtons method
                 grad_func = lambda x: grad_neg_expected_log_joint(x, Ez, Ezzp1, scale=scale)
                 hess_func = lambda x: hessian_neg_expected_log_joint(x, Ez, Ezzp1, scale=scale)
                 x = newtons_method_block_tridiag_hessian(
@@ -634,12 +635,32 @@ J
                     J_diag, J_lower_diag = hessian_neg_expected_log_joint(x.reshape((T,D)), Ez, Ezzp1, scale=scale)
                     return symm_block_tridiag_matmul(J_diag, J_lower_diag, p.reshape((T,D))).ravel()
                 from scipy.optimize import minimize 
-                sol = minimize(obj_func, x0.reshape((T*D)), hessp=hess_p, jac=grad_func, method="trust-krylov")
+                # sol = minimize(obj_func, x0.reshape((T*D)), hessp=hess_p, jac=grad_func, method="trust-krylov")
+                sol = minimize(obj_func, x0.reshape((T*D)), hessp=hess_p, jac=grad_func, method="trust-ncg")
                 x = sol.x.reshape((T,D))
 
             # Evaluate the Hessian at the mode
             assert np.all(np.isfinite(obj(x)))
             J_diag, J_lower_diag = hessian_neg_expected_log_joint(x, Ez, Ezzp1)
+
+            # test hessian
+            try:
+                import ipdb; ipdb.set_trace()
+                J_banded = blocks_to_bands(J_diag, J_lower_diag, lower=True)
+                C = cholesky_banded(J_banded, lower=True)
+            except np.linalg.LinAlgError:
+                # replace emissions Hessian on diagonal with approximate Hessian
+                warnings.warn("Hessian is not PSD. Replacing the exact Emissioms Hessian \
+                with approximate Emissions Hessian.")
+                J_diag_old = np.copy(J_diag)
+                J_diag += self.emissions.hessian_log_emissions_prob(data, input, mask, tag, x, Ez)
+                J_diag -= self.emissions.approx_hessian_log_emissions_prob(data, input, mask, tag, x, Ez)
+
+                # from ssm.primitives import blocks_to_full
+                # H_original = blocks_to_full(J_diag_old, J_lower_diag)
+                # H_new = blocks_to_full(J_diag, J_lower_diag)
+                # import matplotlib.pyplot as plt 
+                # import ipdb; ipdb.set_trace()
 
             # Compute the Hessian vector product h = J * x = -H * x
             # We can do this without instantiating the full matrix
