@@ -1018,6 +1018,8 @@ class CalciumEmissions(_LinearEmissions):
 
     def sample(self, z, x, input=None, tag=None):
         T, N = z.shape[0], self.N
+
+        # this assumes single subspace
         z = np.zeros_like(z, dtype=int)
 
         # firing rates
@@ -1026,6 +1028,7 @@ class CalciumEmissions(_LinearEmissions):
 
         # sample spikes
         spikes = npr.poisson(lambdas)
+        self.sampled_spikes = spikes[1:,:,:]
         # import ipdb; ipdb.set_trace()
         # autoregressive parameters
         etas = np.exp(self.inv_etas)

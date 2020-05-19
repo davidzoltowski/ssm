@@ -48,7 +48,7 @@ class Observations(object):
         raise NotImplementedError
 
     def m_step(self, expectations, datas, inputs, masks, tags,
-               optimizer="bfgs", **kwargs):
+               optimizer="lbfgs", **kwargs):
         """
         If M-step cannot be done in closed form for the observations, default to SGD.
         """
@@ -1746,3 +1746,131 @@ class VonMisesObservations(Observations):
     def smooth(self, expectations, data, input, tag):
         mus = self.mus
         return expectations.dot(mus)
+
+def log_poisson_1D(y, rate):
+    return y * np.log(rate) - rate - gammaln(y+1)
+
+def log_gaussian_1D(y, mu, sig2):
+    return -0.5 * np.log(2.0 * np.pi * sig2) -0.5 * (y - mu)**2 / sig2
+
+
+class CalciumObservations(Observations):
+    def __init__(self, K, D, M=0, lags=1, S=10):
+        super(CalciumObservations, self).__init__(K, D, M)
+        self.log_lambdas = npr.randn(K, D)
+
+        # Initialize AR component of the model
+        # make these vectors
+        self.inv_etas = -4 + npr.randn(D) 
+
+        # Shrink the eigenvalues of the A matrices to avoid instability.
+        # Since the As are diagonal, this is just a clip.
+        As = np.abs(npr.randn(D)) # autoregressive component must be positive!
+        self.inv_As = np.log(np.clip(As, -1.0 + 1e-8, 1 - 1e-8))
+
+        # spike part of mean
+        self.inv_betas = np.log(np.ones(D))
+
+        # number of spikes to sum over
+        self.S = S
+
+    @property
+    def params(self):
+        # return self.log_lambdas
+        return (self.log_lambdas, self.inv_As, self.inv_betas, self.inv_etas)
+
+    @params.setter
+    def params(self, value):
+        # self.log_lambdas = value
+        self.log_lambdas, self.inv_As, self.inv_betas, self.inv_etas = value 
+
+    def permute(self, perm):
+        self.log_lambdas = self.log_lambdas[perm]
+
+    @ensure_args_are_lists
+    def initialize(self, datas, inputs=None, masks=None, tags=None):
+
+        # Initialize with KMeans
+        from sklearn.cluster import KMeans
+        data = np.concatenate(datas)
+        km = KMeans(self.K).fit(data)
+        self.log_lambdas = np.log(np.clip(km.cluster_centers_ / np.max(km.cluster_centers_), 0.01, np.inf))
+        # import ipdb; ipdb.set_trace() 
+
+    def log_likelihoods(self, data, input, mask, tag):
+        # S is number of spikes to marginalize
+        # firing rates        
+        # import ipdb; ipdb.set_trace() 
+        lambdas = np.exp(self.log_lambdas)[None,:,:]
+        mask = np.ones_like(data, dtype=bool) if mask is None else mask
+
+        # compute autoregressive component of mean
+        pad = np.zeros((1, 1, self.D))
+        mus = np.concatenate((pad, np.exp(self.inv_As[None, None, :]) * data[:-1, None, :])) 
+
+        # initialize spike count range
+        s = np.arange(0,self.S,1)
+
+        # add spike components to autoregressive mean for each number of spikes
+        mus = mus[:,:,:,None] + np.exp(self.inv_betas[None,None,:,None]) * s
+        sig2s = np.exp(self.inv_etas) # get noise variances
+
+        # compute log likelihood, marginalizing out the spikes
+        outg = log_gaussian_1D(data[:,None,:,None], mus, sig2s[None,None,:,None])
+        outp = log_poisson_1D(s[None,None,None,:], lambdas[:,:,:,None])
+        # import ipdb; ipdb.set_trace()
+        lls = logsumexp(outg + outp, axis=3) # marginalize over unseen spikes here
+
+        # return np.sum(lls) # sum across all neurons and time points 
+        return np.sum(lls * mask[:, None, :], axis=2)
+
+    # def sample_x(self, z, xhist, input=None, tag=None, with_noise=True):
+    #     lambdas = np.exp(self.log_lambdas)
+    #     return npr.poisson(lambdas[z])
+
+    # def sample_x(self, z, xhist, input=None, tag=None, with_noise=True):
+    #     T, N = z.shape[0], self.N
+
+    #     # this assumes single subspace
+    #     z = np.zeros_like(z, dtype=int)
+
+    #     # firing rates
+    #     lambdas = np.exp(self.log_lambdas)[z]
+
+    #     # sample spikes
+    #     spikes = npr.poisson(lambdas)
+    #     self.sampled_spikes = spikes[1:,:,:]
+    #     # import ipdb; ipdb.set_trace()
+    #     # autoregressive parameters
+    #     etas = np.exp(self.inv_etas)
+    #     mus = np.zeros_like(lambdas) # start with zero mean
+    #     y = np.zeros((T, N))
+    #     y[0] = mus[0, z[0], :] + np.sqrt(etas[z[0]]) * npr.randn(N)
+    #     for t in range(1, T):
+    #         y[t] = mus[t, z[t], :] + self.As * y[t-1] + self.betas * spikes[t, z[t], :] + np.sqrt(etas) * npr.randn(N) 
+    #     return y
+
+    def m_step(self, expectations, datas, inputs, masks, tags, **kwargs):
+        return Observations.m_step(self, expectations, datas, inputs, masks, tags, optimizer="lbfgs", **kwargs)
+
+    def smooth(self, expectations, data, input, tag):
+        """
+        Compute the mean observation under the posterior distribution
+        of latent discrete states.
+        """
+        return expectations.dot(np.exp(self.log_lambdas))
+
+    def smooth(self, expectations, data, input, tag):
+        # spike rate mean
+        lambdas = np.exp(self.log_lambdas)[None,:,:]
+                
+        # compute autoregressive component of mean
+        pad = np.zeros((1, 1, self.D))
+        mus = np.concatenate((pad, np.exp(self.inv_As[None, None, :]) * data[:-1, None, :])) 
+
+        # marginalize over spikes
+        s = np.arange(0,self.S,1)
+        mus = mus[:,:,:,None] + np.exp(self.inv_betas[None,None,:,None]) * s
+        outp = log_poisson_1D(s[None,None,None,:], lambdas[:,:,:,None])
+        mus = np.sum(mus * np.exp(outp), axis=3)
+        return np.sum(expectations[:,:,None] * mus, axis=1)

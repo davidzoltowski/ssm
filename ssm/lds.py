@@ -645,7 +645,7 @@ J
 
             # test hessian
             try:
-                import ipdb; ipdb.set_trace()
+                # import ipdb; ipdb.set_trace()
                 J_banded = blocks_to_bands(J_diag, J_lower_diag, lower=True)
                 C = cholesky_banded(J_banded, lower=True)
             except np.linalg.LinAlgError:

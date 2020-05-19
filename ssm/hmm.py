@@ -101,6 +101,7 @@ class HMM(object):
             robust_autoregressive=obs.RobustAutoRegressiveObservations,
             diagonal_robust_ar=obs.RobustAutoRegressiveDiagonalNoiseObservations,
             diagonal_robust_autoregressive=obs.RobustAutoRegressiveDiagonalNoiseObservations,
+            calcium=obs.CalciumObservations,
             )
 
         if isinstance(observations, str):
