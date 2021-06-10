@@ -1082,7 +1082,7 @@ class AutoRegressiveObservations(_AutoRegressiveObservationsBase):
 
     def neg_hessian_expected_log_dynamics_prob(self, Ez, data, input, mask, tag=None):
         assert np.all(mask), "Cannot compute negative Hessian of autoregressive obsevations with missing data."
-        assert self.lags == 1, "Does not compute negative Hessian of autoregressive observations with lags > 1"
+        # assert self.lags == 1, "Does not compute negative Hessian of autoregressive observations with lags > 1"
 
         # initial distribution contributes a Gaussian term to first diagonal block
         J_ini = np.sum(Ez[0, :, None, None] * np.linalg.inv(self.Sigmas_init), axis=0)
@@ -2081,3 +2081,31 @@ class BilinearObservations(AutoRegressiveObservations):
 
             S = np.linalg.cholesky(self.Sigmas[z]) if with_noise else 0
             return mu + np.dot(S, npr.randn(D))
+
+    # def m_step(self, expectations, datas, inputs, masks, tags,
+    #            continuous_expectations=None, **kwargs):
+    def m_step(self, expectations,
+               datas, inputs, masks, tags,
+               optimizer="lbfgs", maxiter=100, **kwargs):
+        """
+        If M-step in Laplace-EM cannot be done in closed form for the emissions, default to SGD.
+        """
+        optimizer = dict(adam=adam, bfgs=bfgs, lbfgs=lbfgs, rmsprop=rmsprop, sgd=sgd)[optimizer]
+
+        # expected log likelihood
+        T = sum([data.shape[0] for data in datas])
+        def _objective(params, itr):
+            self.params = params
+            obj = 0
+            obj += self.log_prior()
+            for data, input, mask, tag, (Ez, _, _) in \
+                zip(datas, inputs, masks, tags, expectations):
+                obj += np.sum(Ez * self.log_likelihoods(data, input, mask, tag))
+            return -obj / T
+
+        # Optimize emissions log-likelihood
+        self.params = optimizer(_objective, self.params,
+                                num_iters=maxiter,
+                                suppress_warnings=True,
+                                **kwargs)
+                                

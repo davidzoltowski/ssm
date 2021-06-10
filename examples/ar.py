@@ -49,6 +49,8 @@ true_lds.emissions.Fs[0] = 0.0 * true_lds.emissions.Fs[0]
 # us = 0.2 * npr.choice([0,1], (T, M), replace=True)
 us = 0.2 * npr.randn(T, M)
 z, x, y = true_lds.sample(T) #, input=us)
+
+# Fit model with true Hessian
 print("Fitting LDS with Laplace EM")
 lds = SLDS(N, K, D, M=M, dynamics="higher_order", emissions="gaussian", F_zero_flag=True,
            dynamics_kwargs={'lags':lags})
@@ -56,6 +58,17 @@ lds.emissions.Fs[0] = 0.0 * true_lds.emissions.Fs[0]
 lds.initialize(y, inputs=us)
 kwargs = {}
 q_lem_elbos, q_lem = lds.fit(y, inputs=us, method="laplace_em", variational_posterior="structured_meanfield_banded",
+                             num_iters=20, initialize=False, continuous_optimizer='newton')  #lbfgs newton
+print(type(q_lem))
+
+# Fit model with approximate Hessian 
+print("Fitting LDS with Laplace EM")
+lds2 = SLDS(N, K, D, M=M, emissions="gaussian", F_zero_flag=True,
+           dynamics_kwargs={'lags':lags})
+lds2.emissions.Fs[0] = 0.0 * true_lds.emissions.Fs[0]
+lds2.initialize(y, inputs=us)
+kwargs = {}
+q_lem_elbos2, q_lem2 = lds2.fit(y, inputs=us, method="laplace_em", variational_posterior="structured_meanfield_banded",
                              num_iters=20, initialize=False, continuous_optimizer='newton')  #lbfgs newton
 print(type(q_lem))
 

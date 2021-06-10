@@ -58,8 +58,10 @@ print("Fitting LDS with Laplace EM")
 lds = SLDS(N, K, D, M=M, dynamics="bilinear", emissions="gaussian")
 lds.emissions.Fs[0] = 0.0 * true_lds.emissions.Fs[0]
 lds.initialize(y, inputs=us)
+print(lds.dynamics.Bs)
 q_lem_elbos, q_lem = lds.fit(y, inputs=us, method="laplace_em", variational_posterior="structured_meanfield",
                              num_iters=20, initialize=False)
+print(lds.dynamics.Bs)
 # Get the posterior mean of the continuous states
 q_lem_x = q_lem.mean_continuous_states[0]
 # transform inferred latents to match true ones
