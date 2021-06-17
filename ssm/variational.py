@@ -359,10 +359,10 @@ class SLDSStructuredMeanFieldVariationalPosterior(VariationalPosterior):
         #     h_obs = (1.0 / self.initial_variance) * self.model.emissions. \
         #         invert(data, input=input, mask=mask, tag=tag)
         # except:
-        #     warn("We can only initialize the continuous states if the emissions support "
-        #          "\"inverting\" the observations by mapping them to an estimate of the "
-        #          "latent states. Defaulting to a random initialization instead.")
-        #     h_obs = (1.0 / self.initial_variance) * np.random.randn(data.shape[0], self.D)
+            # warn("We can only initialize the continuous states if the emissions support "
+            #      "\"inverting\" the observations by mapping them to an estimate of the "
+            #      "latent states. Defaulting to a random initialization instead.")
+            h_obs = (1.0 / self.initial_variance) * np.random.randn(data.shape[0], self.D)
 
         # Initialize the posterior variance to self.initial_variance * I
         J_ini = np.zeros((D, D))
